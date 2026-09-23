@@ -1,36 +1,25 @@
 import argparse
-import time
-from pathlib import Path
 
 import cv2
 
-from src.detector import FaceDetector
+from src.tracker import FaceTracker
 from src.pose_estimator import HeadPoseEstimator
-from src.smoothing import PoseSmoother
-from src.behavior_analyzer import BehaviorAnalyzer
-from src.visualization import (
-    draw_bbox,
-    draw_pose,
-    draw_behavior,
-)
+from src.pipeline import ClassroomPipeline
+from src.logger import ClassroomLogger
 
 
 def parse_args():
 
-    parser = argparse.ArgumentParser(
-        description="Exam Head Pose Detection System"
-    )
+    parser = argparse.ArgumentParser()
 
     parser.add_argument(
         "--source",
         default="0",
-        help="Camera index, video path, or stream URL",
     )
 
     parser.add_argument(
         "--device",
         default="cuda:0",
-        help="Inference device, e.g. cuda:0 or cpu",
     )
 
     parser.add_argument(
@@ -44,9 +33,9 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--face-conf",
-        type=float,
-        default=0.5,
+        "--imgsz",
+        type=int,
+        default=1280,
     )
 
     return parser.parse_args()
@@ -54,22 +43,110 @@ def parse_args():
 
 def open_source(source):
 
-    # Camera index
     if source.isdigit():
         return cv2.VideoCapture(int(source))
 
-    # Video / network stream
     return cv2.VideoCapture(source)
+
+
+def draw_person(
+    frame,
+    face,
+    person_id,
+    pose,
+    behavior,
+):
+
+    color = (0, 255, 0)
+
+    if behavior is not None:
+
+        if behavior.state == "SUSPICIOUS":
+            color = (0, 255, 255)
+
+        elif behavior.state == "ALERT":
+            color = (0, 0, 255)
+
+    cv2.rectangle(
+        frame,
+        (face.x1, face.y1),
+        (face.x2, face.y2),
+        color,
+        2,
+    )
+
+    cv2.putText(
+        frame,
+        person_id,
+        (face.x1, face.y1 - 10),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        color,
+        2,
+    )
+
+    if pose is not None:
+
+        text = (
+            f"Y:{pose.yaw:+.0f} "
+            f"P:{pose.pitch:+.0f} "
+            f"R:{pose.roll:+.0f}"
+        )
+
+        cv2.putText(
+            frame,
+            text,
+            (face.x1, face.y2 + 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            color,
+            1,
+        )
+
+    if behavior is not None:
+
+        cv2.putText(
+            frame,
+            behavior.state,
+            (face.x1, face.y2 + 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            color,
+            1,
+        )
 
 
 def main():
 
     args = parse_args()
 
-    face_detector = FaceDetector(
-        model_path=args.face_model,
-        confidence=args.face_conf,
+    # -----------------------------------------------------
+    # Logger
+    # -----------------------------------------------------
+
+    logger = ClassroomLogger(
+        base_dir="logs",
+    )
+
+    logger.log_session_start(
+        source=args.source,
         device=args.device,
+        config={
+            "image_size": args.imgsz,
+            "pose_interval": 2,
+            "min_face_size": 64,
+        },
+    )
+
+    print(
+        f"Logging to: {logger.session_dir}"
+    )
+
+    tracker = FaceTracker(
+        model_path=args.face_model,
+        image_size=args.imgsz,
+        device=args.device,
+        tracker="bytetrack.yaml",
     )
 
     pose_estimator = HeadPoseEstimator(
@@ -77,149 +154,169 @@ def main():
         device=args.device,
     )
 
-    smoother = PoseSmoother(
-        alpha=0.35,
-    )
-
-    analyzer = BehaviorAnalyzer(
-        yaw_threshold=35.0,
-        pitch_up_threshold=-20.0,
-        roll_threshold=35.0,
-        min_duration=1.0,
-        alert_duration=3.0,
+    pipeline = ClassroomPipeline(
+        tracker=tracker,
+        pose_estimator=pose_estimator,
+        pose_interval=2,
+        min_face_size=64,
     )
 
     cap = open_source(args.source)
 
     if not cap.isOpened():
+        logger.log_session_end(
+            "camera_open_failed"
+        )
+        logger.close()
+
         raise RuntimeError(
-            f"Could not open source: {args.source}"
+            f"Unable to open source {args.source}"
         )
 
-    previous_time = time.perf_counter()
+    # Stores the previous state for each person.
+    previous_states = {}
 
-    while True:
+    try:
 
-        ret, frame = cap.read()
+        while True:
 
-        if not ret:
-            print("Failed to read frame.")
-            break
+            ret, frame = cap.read()
 
-        current_time = time.perf_counter()
+            if not ret:
+                logger.log_session_end(
+                    "frame_read_failed"
+                )
+                break
 
-        fps = 1.0 / max(
-            current_time - previous_time,
-            1e-6,
-        )
+            results = pipeline.process(frame)
 
-        previous_time = current_time
+            for (
+                face,
+                person_id,
+                pose,
+                behavior,
+                pose_updated,
+            ) in results:
 
-        # -------------------------------------------------
-        # 1. Face detection
-        # -------------------------------------------------
+                draw_person(
+                    frame,
+                    face,
+                    person_id,
+                    pose,
+                    behavior,
+                )
 
-        faces = face_detector.detect(frame)
+                if not pose_updated:
+                    continue
 
-        # -------------------------------------------------
-        # Multiple faces:
-        # For a first prototype, select the largest face.
-        # -------------------------------------------------
+                if behavior is None:
+                    continue
 
-        if len(faces) == 0:
+                current_state = behavior.state
 
-            result = analyzer.update(None)
+                previous_state = previous_states.get(
+                    person_id
+                )
+
+                # ---------------------------------------------------------
+                # ONLY LOG WHEN ENTERING SUSPICIOUS
+                # OR ENTERING ALERT
+                # ---------------------------------------------------------
+
+                if (
+                    current_state == "SUSPICIOUS"
+                    and previous_state != "SUSPICIOUS"
+                ):
+
+                    logger.log_behavior_event(
+                        frame=frame,
+                        person_id=person_id,
+                        tracker_id=face.tracker_id,
+                        event_type="suspicious_start",
+                        behavior=behavior,
+                        pose=pose,
+                        bbox=face,
+                    )
+
+                elif (
+                    current_state == "ALERT"
+                    and previous_state != "ALERT"
+                ):
+
+                    logger.log_behavior_event(
+                        frame=frame,
+                        person_id=person_id,
+                        tracker_id=face.tracker_id,
+                        event_type="alert_start",
+                        behavior=behavior,
+                        pose=pose,
+                        bbox=face,
+                    )
+
+                previous_states[person_id] = current_state
+
+            # ---------------------------------------------
+            # Classroom info
+            # ---------------------------------------------
+
+            active = len(results)
 
             cv2.putText(
                 frame,
-                "NO FACE",
-                (20, 40),
+                f"Active faces: {active}",
+                (20, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 0, 255),
+                0.7,
+                (255, 255, 255),
                 2,
             )
 
-        else:
-
-            # Largest face = primary examinee
-            bbox = max(
-                faces,
-                key=lambda b: b.width * b.height,
-            )
-
-            draw_bbox(frame, bbox)
-
-            # -------------------------------------------------
-            # 2. Crop face
-            # -------------------------------------------------
-
-            face_crop = face_detector.crop_face(
+            cv2.imshow(
+                "Classroom Monitoring",
                 frame,
-                bbox,
-                padding=0.20,
             )
 
-            # -------------------------------------------------
-            # 3. Head pose estimation
-            # -------------------------------------------------
+            key = cv2.waitKey(1) & 0xFF
 
-            pose = pose_estimator.predict(
-                face_crop
-            )
+            if key == ord("q"):
+                logger.log_session_end(
+                    "user_quit"
+                )
+                break
 
-            # -------------------------------------------------
-            # 4. Temporal smoothing
-            # -------------------------------------------------
+    except KeyboardInterrupt:
 
-            pose = smoother.update(pose)
-
-            # -------------------------------------------------
-            # 5. Behavioral analysis
-            # -------------------------------------------------
-
-            result = analyzer.update(
-                pose,
-                timestamp=current_time,
-            )
-
-            # -------------------------------------------------
-            # 6. Visualization
-            # -------------------------------------------------
-
-            draw_pose(frame, pose)
-
-            draw_behavior(
-                frame,
-                result,
-            )
-
-        # -------------------------------------------------
-        # FPS
-        # -------------------------------------------------
-
-        cv2.putText(
-            frame,
-            f"FPS: {fps:.1f}",
-            (20, frame.shape[0] - 20),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 255, 255),
-            2,
+        logger.log_session_end(
+            "keyboard_interrupt"
         )
 
-        cv2.imshow(
-            "Exam Pose Detection",
-            frame,
+    except Exception as exc:
+
+        logger.log_event(
+            person_id="SYSTEM",
+            tracker_id=-1,
+            event_type="application_error",
+            extra={
+                "error": repr(exc),
+            },
         )
 
-        key = cv2.waitKey(1) & 0xFF
+        logger.log_session_end(
+            "application_exception"
+        )
 
-        if key == ord("q"):
-            break
+        raise
 
-    cap.release()
-    cv2.destroyAllWindows()
+    finally:
+
+        cap.release()
+        cv2.destroyAllWindows()
+
+        logger.close()
+
+        print(
+            f"Logs saved to: {logger.session_dir}"
+        )
 
 
 if __name__ == "__main__":

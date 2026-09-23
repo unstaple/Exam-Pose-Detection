@@ -1,0 +1,26 @@
+tracker_type: botsort
+
+# Detection association
+track_high_thresh: 0.20
+track_low_thresh: 0.05
+new_track_thresh: 0.25
+
+# Keep lost tracks alive longer.
+# At 30 FPS, 90 frames ~= 3 seconds.
+track_buffer: 90
+
+# More tolerant association.
+match_thresh: 0.85
+
+# Fuse detection confidence with association distance.
+fuse_score: true
+
+# Camera is assumed fixed.
+gmc_method: none
+
+# Start without ReID.
+with_reid: false
+
+proximity_thresh: 0.5
+appearance_thresh: 0.8
+model: auto
