@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        Exam Pose Monitoring
+    </title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+
+            background: #101114;
+
+            color: #e8e8ea;
+
+            font-family:
+                Inter,
+                system-ui,
+                -apple-system,
+                sans-serif;
+        }
+
+        header {
+            padding: 16px 24px;
+
+            border-bottom:
+                1px solid #2a2c32;
+
+            display: flex;
+
+            justify-content:
+                space-between;
+
+            align-items: center;
+        }
+
+        h1 {
+            margin: 0;
+
+            font-size: 20px;
+        }
+
+        .session {
+            color: #989ba5;
+
+            font-size: 13px;
+        }
+
+        .layout {
+            display: grid;
+
+            grid-template-columns:
+                minmax(0, 2fr)
+                minmax(360px, 1fr);
+
+            gap: 16px;
+
+            padding: 16px;
+        }
+
+        .panel {
+            background: #17191e;
+
+            border:
+                1px solid #292c33;
+
+            border-radius: 12px;
+
+            overflow: hidden;
+        }
+
+        .panel-title {
+            padding: 12px 14px;
+
+            border-bottom:
+                1px solid #292c33;
+
+            font-weight: 700;
+        }
+
+        .video-wrap {
+            background: #050506;
+
+            aspect-ratio: 16 / 9;
+
+            display: flex;
+
+            justify-content:
+                center;
+
+            align-items:
+                center;
+        }
+
+        #video {
+            width: 100%;
+
+            display: block;
+        }
+
+        .stats {
+            display: grid;
+
+            grid-template-columns:
+                repeat(4, 1fr);
+
+            gap: 10px;
+
+            padding: 12px;
+        }
+
+        .stat {
+            padding: 12px;
+
+            border:
+                1px solid #2a2c32;
+
+            border-radius: 10px;
+
+            background: #131519;
+        }
+
+        .stat-label {
+            color: #8e919a;
+
+            font-size: 12px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+
+            font-weight: 800;
+
+            margin-top: 4px;
+        }
+
+        .people {
+            padding: 12px;
+
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+
+            border-collapse:
+                collapse;
+        }
+
+        th,
+        td {
+            padding: 8px;
+
+            text-align: left;
+
+            border-bottom:
+                1px solid #25272d;
+
+            font-size: 13px;
+        }
+
+        th {
+            color: #8e919a;
+
+            font-weight: 600;
+        }
+
+        .state {
+            font-weight: 800;
+        }
+
+        .NORMAL {
+            color: #66d18f;
+        }
+
+        .SUSPICIOUS {
+            color: #f1c75b;
+        }
+
+        .ALERT {
+            color: #ff6464;
+        }
+
+        .NO_POSE {
+            color: #90939c;
+        }
+
+        .events {
+            padding: 12px;
+
+            max-height: 800px;
+
+            overflow: auto;
+        }
+
+        .event {
+            padding: 10px;
+
+            margin-bottom: 8px;
+
+            border:
+                1px solid #2a2c32;
+
+            border-radius: 8px;
+
+            background: #131519;
+        }
+
+        .event-head {
+            display: flex;
+
+            justify-content:
+                space-between;
+
+            gap: 12px;
+
+            font-size: 13px;
+        }
+
+        .event-reason {
+            margin-top: 6px;
+
+            color: #c5c7cc;
+
+            font-size: 12px;
+        }
+
+        .event-pose {
+            margin-top: 6px;
+
+            color: #8e919a;
+
+            font-size: 11px;
+        }
+
+        .event a {
+            color: #8fc7ff;
+
+            font-size: 12px;
+        }
+
+        .event img {
+            width: 100%;
+
+            margin-top: 8px;
+
+            border-radius: 6px;
+        }
+
+        @media (max-width: 1000px) {
+
+            .layout {
+                grid-template-columns: 1fr;
+            }
+
+        }
+
+    </style>
+
+</head>
+
+
+<body>
+
+<header>
+
+    <h1>
+        Exam Pose Monitoring
+    </h1>
+
+    <div class="session">
+
+        Session:
+
+        <span id="session">
+            -
+        </span>
+
+    </div>
+
+</header>
+
+
+<main class="layout">
+
+    <!-- ================================================= -->
+    <!-- LEFT SIDE -->
+    <!-- ================================================= -->
+
+    <section>
+
+        <div class="panel">
+
+            <div class="panel-title">
+                Live classroom view
+            </div>
+
+            <div class="video-wrap">
+
+                <img
+                    id="video"
+                    src="/video_feed"
+                    alt="Live classroom feed"
+                >
+
+            </div>
+
+
+            <div class="stats">
+
+                <div class="stat">
+
+                    <div class="stat-label">
+                        Active faces
+                    </div>
+
+                    <div
+                        class="stat-value"
+                        id="active"
+                    >
+                        0
+                    </div>
+
+                </div>
+
+
+                <div class="stat">
+
+                    <div class="stat-label">
+                        Normal
+                    </div>
+
+                    <div
+                        class="stat-value"
+                        id="normal"
+                    >
+                        0
+                    </div>
+
+                </div>
+
+
+                <div class="stat">
+
+                    <div class="stat-label">
+                        Suspicious
+                    </div>
+
+                    <div
+                        class="stat-value"
+                        id="suspicious"
+                    >
+                        0
+                    </div>
+
+                </div>
+
+
+                <div class="stat">
+
+                    <div class="stat-label">
+                        Alert
+                    </div>
+
+                    <div
+                        class="stat-value"
+                        id="alert"
+                    >
+                        0
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- ============================================= -->
+        <!-- PEOPLE TABLE -->
+        <!-- ============================================= -->
+
+        <div
+            class="panel"
+            style="margin-top: 16px;"
+        >
+
+            <div class="panel-title">
+                Tracked people
+            </div>
+
+            <div class="people">
+
+                <table>
+
+                    <thead>
+
+                    <tr>
+
+                        <th>ID</th>
+
+                        <th>Tracker</th>
+
+                        <th>State</th>
+
+                        <th>Yaw</th>
+
+                        <th>Pitch</th>
+
+                        <th>Roll</th>
+
+                        <th>Score</th>
+
+                    </tr>
+
+                    </thead>
+
+
+                    <tbody
+                        id="people-body"
+                    ></tbody>
+
+                </table>
+
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- ================================================= -->
+    <!-- RIGHT SIDE -->
+    <!-- ================================================= -->
+
+    <aside class="panel">
+
+        <div class="panel-title">
+
+            Suspicious / alert events
+
+        </div>
+
+        <div
+            class="events"
+            id="events"
+        ></div>
+
+    </aside>
+
+</main>
+
+
+<script>
+
+    function escapeHtml(value) {
+
+        return String(value ?? "")
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#039;");
+
+    }
+
+
+    function poseValue(
+        pose,
+        key
+    ) {
+
+        if (!pose) {
+            return "-";
+        }
+
+        return (
+            pose[key].toFixed(1)
+            + "°"
+        );
+
+    }
+
+
+    async function refresh() {
+
+        try {
+
+            const response = await fetch(
+                "/api/status",
+                {
+                    cache: "no-store"
+                }
+            );
+
+            const data =
+                await response.json();
+
+
+            // ---------------------------------------------
+            // Session + statistics
+            // ---------------------------------------------
+
+            document
+                .getElementById("session")
+                .textContent =
+                data.session_id;
+
+
+            document
+                .getElementById("active")
+                .textContent =
+                data.active_faces;
+
+
+            document
+                .getElementById("normal")
+                .textContent =
+                data.normal;
+
+
+            document
+                .getElementById("suspicious")
+                .textContent =
+                data.suspicious;
+
+
+            document
+                .getElementById("alert")
+                .textContent =
+                data.alert;
+
+
+            // ---------------------------------------------
+            // People
+            // ---------------------------------------------
+
+            const body =
+                document.getElementById(
+                    "people-body"
+                );
+
+
+            body.innerHTML =
+                data.people
+                    .map(
+                        person => `
+
+                        <tr>
+
+                            <td>
+                                ${escapeHtml(
+                                    person.person_id
+                                )}
+                            </td>
+
+                            <td>
+                                ${person.tracker_id}
+                            </td>
+
+                            <td
+                                class="
+                                    state
+                                    ${escapeHtml(
+                                        person.state
+                                    )}
+                                "
+                            >
+                                ${escapeHtml(
+                                    person.state
+                                )}
+                            </td>
+
+                            <td>
+                                ${poseValue(
+                                    person.pose,
+                                    "yaw"
+                                )}
+                            </td>
+
+                            <td>
+                                ${poseValue(
+                                    person.pose,
+                                    "pitch"
+                                )}
+                            </td>
+
+                            <td>
+                                ${poseValue(
+                                    person.pose,
+                                    "roll"
+                                )}
+                            </td>
+
+                            <td>
+                                ${Number(
+                                    person.score
+                                ).toFixed(2)}
+                            </td>
+
+                        </tr>
+
+                    `
+                    )
+                    .join("");
+
+
+            // ---------------------------------------------
+            // Events
+            // ---------------------------------------------
+
+            const events =
+                document.getElementById(
+                    "events"
+                );
+
+
+            events.innerHTML =
+                data.events
+                    .map(
+                        event => {
+
+                            let poseText =
+                                "No pose";
+
+                            if (event.pose) {
+
+                                poseText =
+                                    `Yaw ${
+                                        event.pose.yaw.toFixed(1)
+                                    }°
+                                    · Pitch ${
+                                        event.pose.pitch.toFixed(1)
+                                    }°
+                                    · Roll ${
+                                        event.pose.roll.toFixed(1)
+                                    }°`;
+
+                            }
+
+
+                            let snapshotHtml =
+                                "";
+
+                            if (
+                                event.snapshot
+                            ) {
+
+                                const url =
+                                    "/snapshot/"
+                                    + event.snapshot;
+
+                                snapshotHtml = `
+
+                                    <div
+                                        style="
+                                            margin-top: 8px;
+                                        "
+                                    >
+
+                                        <img
+                                            src="${url}"
+                                            alt="Event snapshot"
+                                        >
+
+                                        <div
+                                            style="
+                                                margin-top: 5px;
+                                            "
+                                        >
+
+                                            <a
+                                                href="${url}"
+                                                target="_blank"
+                                                rel="noopener"
+                                            >
+                                                Open full snapshot
+                                            </a>
+
+                                        </div>
+
+                                    </div>
+
+                                `;
+
+                            }
+
+
+                            return `
+
+                                <div class="event">
+
+                                    <div
+                                        class="event-head"
+                                    >
+
+                                        <strong>
+
+                                            ${escapeHtml(
+                                                event.person_id
+                                            )}
+
+                                            ·
+
+                                            ${escapeHtml(
+                                                event.event_type
+                                            )}
+
+                                        </strong>
+
+
+                                        <span>
+
+                                            ${escapeHtml(
+                                                event.timestamp
+                                            )}
+
+                                        </span>
+
+                                    </div>
+
+
+                                    <div
+                                        class="event-reason"
+                                    >
+
+                                        ${escapeHtml(
+                                            event.reason
+                                        )}
+
+                                    </div>
+
+
+                                    <div
+                                        class="event-pose"
+                                    >
+
+                                        ${escapeHtml(
+                                            poseText
+                                        )}
+
+                                        · duration
+
+                                        ${
+                                            Number(
+                                                event.duration
+                                            ).toFixed(2)
+                                        }s
+
+                                        · score
+
+                                        ${
+                                            Number(
+                                                event.score ?? 0
+                                            ).toFixed(2)
+                                        }
+
+                                    </div>
+
+
+                                    ${snapshotHtml}
+
+                                </div>
+
+                            `;
+
+                        }
+                    )
+                    .join("");
+
+        }
+
+        catch (error) {
+
+            console.error(
+                "Dashboard update failed:",
+                error
+            );
+
+        }
+
+    }
+
+
+    refresh();
+
+    setInterval(
+        refresh,
+        500
+    );
+
+</script>
+
+
+</body>
+
+</html>

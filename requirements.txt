@@ -6,3 +6,4 @@ ultralytics>=8.0
 sixdrepnet==0.1.6
 Pillow>=10.0
 PyYAML>=6.0
+Flask>=3.0

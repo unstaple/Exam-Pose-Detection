@@ -36,9 +36,9 @@ class ClassroomPipeline:
         self.frame_width = frame_width
         self.frame_height = frame_height
 
-    def process(self, frame):
+    def process(self, frame, timestamp=None):
 
-        timestamp = time.monotonic()
+        if timestamp is None: timestamp = time.monotonic()
 
         self.frame_index += 1
 

@@ -1,16 +1,11 @@
+from __future__ import annotations
+
 import time
 
 from .types import HeadPose, BehaviorResult
 
 
 class BehaviorAnalyzer:
-    """
-    Temporal heuristic system for head-pose analysis.
-
-    Important:
-        This class does NOT determine whether cheating occurred.
-        It identifies suspicious head-pose events.
-    """
 
     NORMAL = "NORMAL"
     SUSPICIOUS = "SUSPICIOUS"
@@ -18,53 +13,56 @@ class BehaviorAnalyzer:
 
     def __init__(
         self,
-        yaw_threshold: float = 10.0,
-        pitch_up_threshold: float = 15.0,
-        roll_threshold: float = 10.0,
-        min_duration: float = 1.0,
-        alert_duration: float = 3.0,
-        cooldown: float = 2.0,
-    ):
-        self.yaw_threshold = yaw_threshold
-        self.pitch_up_threshold = pitch_up_threshold
-        self.roll_threshold = roll_threshold
 
-        self.min_duration = min_duration
-        self.alert_duration = alert_duration
+        yaw_warning: float = 25.0,
+        yaw_alert: float = 40.0,
+
+        pitch_up_warning: float = 15.0,
+        pitch_up_alert: float = 25.0,
+
+        min_duration: float = 0.8,
+        alert_duration: float = 2.5,
+
+        cooldown: float = 5.0,
+    ):
+
+        self.yaw_warning = yaw_warning
+        self.yaw_alert = yaw_alert
+
+        self.pitch_up_warning = (
+            pitch_up_warning
+        )
+
+        self.pitch_up_alert = (
+            pitch_up_alert
+        )
+
+        self.min_duration = (
+            min_duration
+        )
+
+        self.alert_duration = (
+            alert_duration
+        )
+
         self.cooldown = cooldown
 
         self.suspicious_since = None
-        self.last_event_time = 0.0
 
-    def _is_suspicious(self, pose: HeadPose) -> bool:
+        self.last_alert_time = 0.0
 
-        suspicious_yaw = abs(pose.yaw) >= self.yaw_threshold
+    def update(
+        self,
+        pose: HeadPose,
+        relative_pose=None,
+        timestamp=None,
+    ):
 
-        # Depending on the coordinate convention of your model,
-        # you may need to invert this condition.
-        suspicious_pitch = (
-            pose.pitch >= self.pitch_up_threshold
-        )
-
-        suspicious_roll = (
-            abs(pose.roll) >= self.roll_threshold
-        )
-
-        return (
-            suspicious_yaw
-            or suspicious_pitch
-            or suspicious_roll
-        )
-
-    def update(self, pose: HeadPose, timestamp=None):
-        """
-        Process one pose observation.
-
-        Returns:
-            BehaviorResult
-        """
+        if timestamp is None:
+            timestamp = time.monotonic()
 
         if pose is None:
+
             self.suspicious_since = None
 
             return BehaviorResult(
@@ -74,102 +72,176 @@ class BehaviorAnalyzer:
                 duration=0.0,
             )
 
-        now = timestamp if timestamp is not None else time.monotonic()
+        # -----------------------------------------------------
+        # IMPORTANT:
+        # Use relative pose when available.
+        # -----------------------------------------------------
 
-        suspicious = self._is_suspicious(pose)
+        if relative_pose is not None:
+
+            yaw = relative_pose["yaw"]
+            pitch = relative_pose["pitch"]
+
+        else:
+
+            # Fallback for debugging.
+            yaw = pose.yaw
+            pitch = pose.pitch
+
+        abs_yaw = abs(yaw)
+
+        # -----------------------------------------------------
+        # Suspicious conditions
+        # -----------------------------------------------------
+
+        yaw_suspicious = (
+            abs_yaw
+            >= self.yaw_warning
+        )
+
+        # Only upward pitch is suspicious.
+        #
+        # If your 6DRepNet sign convention is opposite,
+        # invert this after verifying the axis.
+        pitch_up = max(
+            0.0,
+            pitch,
+        )
+
+        pitch_suspicious = (
+            pitch_up
+            >= self.pitch_up_warning
+        )
+
+        suspicious = (
+            yaw_suspicious
+            or pitch_suspicious
+        )
+
+        # -----------------------------------------------------
+        # Normal
+        # -----------------------------------------------------
 
         if not suspicious:
+
             self.suspicious_since = None
 
             return BehaviorResult(
                 state=self.NORMAL,
                 score=0.0,
-                reason="Head pose within normal range",
+                reason="Normal head movement",
                 duration=0.0,
             )
 
+        # -----------------------------------------------------
+        # Start abnormal interval
+        # -----------------------------------------------------
+
         if self.suspicious_since is None:
-            self.suspicious_since = now
 
-        duration = now - self.suspicious_since
+            self.suspicious_since = (
+                timestamp
+            )
 
-        # Calculate a simple score.
-        score = self._calculate_score(pose)
+        duration = (
+            timestamp
+            - self.suspicious_since
+        )
+
+        # -----------------------------------------------------
+        # Score
+        # -----------------------------------------------------
+
+        yaw_score = min(
+            abs_yaw / self.yaw_alert,
+            1.0,
+        )
+
+        pitch_score = min(
+            pitch_up / self.pitch_up_alert,
+            1.0,
+        )
+
+        score = max(
+            yaw_score,
+            pitch_score,
+        )
+
+        # -----------------------------------------------------
+        # Short movement
+        # -----------------------------------------------------
 
         if duration < self.min_duration:
+
             return BehaviorResult(
                 state=self.NORMAL,
                 score=score,
-                reason="Short abnormal movement",
+                reason="Transient movement",
                 duration=duration,
             )
 
+        # -----------------------------------------------------
+        # Suspicious
+        # -----------------------------------------------------
+
         if duration < self.alert_duration:
+
             return BehaviorResult(
                 state=self.SUSPICIOUS,
                 score=score,
-                reason=self._get_reason(pose),
+                reason=self._reason(
+                    yaw,
+                    pitch_up,
+                ),
                 duration=duration,
             )
 
-        # Cooldown prevents constantly generating alerts.
-        if now - self.last_event_time >= self.cooldown:
-            self.last_event_time = now
+        # -----------------------------------------------------
+        # Alert
+        # -----------------------------------------------------
 
         return BehaviorResult(
             state=self.ALERT,
             score=score,
-            reason=self._get_reason(pose),
+            reason=self._reason(
+                yaw,
+                pitch_up,
+            ),
             duration=duration,
         )
 
-    def _calculate_score(self, pose: HeadPose) -> float:
-
-        yaw_score = min(
-            abs(pose.yaw) / self.yaw_threshold,
-            2.0,
-        )
-
-        pitch_score = min(
-            max(
-                0.0,
-                -pose.pitch / abs(self.pitch_up_threshold)
-            ),
-            2.0,
-        )
-
-        roll_score = min(
-            abs(pose.roll) / self.roll_threshold,
-            2.0,
-        )
-
-        score = (
-            0.5 * yaw_score
-            + 0.35 * pitch_score
-            + 0.15 * roll_score
-        )
-
-        return min(score / 2.0, 1.0)
-
-    def _get_reason(self, pose: HeadPose) -> str:
+    def _reason(
+        self,
+        yaw,
+        pitch_up,
+    ):
 
         reasons = []
 
-        if abs(pose.yaw) >= self.yaw_threshold:
-            direction = "left" if pose.yaw < 0 else "right"
+        if abs(yaw) >= self.yaw_warning:
+
+            if yaw > 0:
+                direction = "right"
+            else:
+                direction = "left"
 
             reasons.append(
-                f"Excessive yaw ({direction})"
+                (
+                    f"Head turned {direction} "
+                    f"({abs(yaw):.1f}°)"
+                )
             )
 
-        if pose.pitch <= self.pitch_up_threshold:
-            reasons.append(
-                f"Abnormal upward pitch ({pose.pitch:.1f}°)"
-            )
+        if (
+            pitch_up
+            >= self.pitch_up_warning
+        ):
 
-        if abs(pose.roll) >= self.roll_threshold:
             reasons.append(
-                f"Excessive roll ({pose.roll:.1f}°)"
+                (
+                    f"Head raised "
+                    f"({pitch_up:.1f}°)"
+                )
             )
 
         return ", ".join(reasons)

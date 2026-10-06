@@ -1,0 +1,21 @@
+{
+  "video": "7092083-hd_1920_1080_30fps.mp4",
+  "fps": 29.97002997002997,
+  "duration_sec": 7.7077,
+  "frames_processed": 231,
+  "ground_truth_events": 10,
+  "predicted_events": {
+    "S01": [],
+    "S04": []
+  },
+  "metrics": {
+    "true_positives": 0,
+    "false_positives": 0,
+    "false_negatives": 10,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "mean_latency_sec": null,
+    "matches": []
+  }
+}

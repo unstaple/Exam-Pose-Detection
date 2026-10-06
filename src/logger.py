@@ -4,26 +4,20 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import cv2
 
 
 class ClassroomLogger:
     """
-    Event-only classroom logger.
+    Event-only logger.
 
-    Saves:
-        events.jsonl
+    Only SUSPICIOUS / ALERT events are written.
 
-    and event screenshots:
-
-        snapshots/
-            face01_...jpg
-            face02_...jpg
-            ...
-
-    Only SUSPICIOUS / ALERT events are logged.
+    Each event receives:
+        - JSONL record
+        - Annotated JPEG snapshot
     """
 
     def __init__(
@@ -34,19 +28,29 @@ class ClassroomLogger:
 
         self.base_dir = Path(base_dir)
 
-        self.session_id = uuid.uuid4().hex[:8]
+        self.session_id = (
+            uuid.uuid4().hex[:8]
+        )
 
-        start_time = datetime.now().strftime(
-            "%Y-%m-%d_%H-%M-%S"
+        start_time = (
+            datetime.now()
+            .strftime(
+                "%Y-%m-%d_%H-%M-%S"
+            )
         )
 
         self.session_dir = (
             self.base_dir
-            / f"session_{start_time}_{self.session_id}"
+            / (
+                f"session_"
+                f"{start_time}_"
+                f"{self.session_id}"
+            )
         )
 
         self.snapshot_dir = (
-            self.session_dir / "snapshots"
+            self.session_dir
+            / "snapshots"
         )
 
         self.snapshot_dir.mkdir(
@@ -55,7 +59,8 @@ class ClassroomLogger:
         )
 
         self.events_path = (
-            self.session_dir / "events.jsonl"
+            self.session_dir
+            / "events.jsonl"
         )
 
         self.events_file = open(
@@ -65,26 +70,31 @@ class ClassroomLogger:
             buffering=1,
         )
 
-        self.jpeg_quality = jpeg_quality
+        self.jpeg_quality = (
+            jpeg_quality
+        )
 
         self.closed = False
 
-        # Used to avoid saving the same state every frame.
-        self.last_logged_state = {}
-
-    # ---------------------------------------------------------
-    # Utility
-    # ---------------------------------------------------------
+    # =========================================================
+    # Timestamp
+    # =========================================================
 
     @staticmethod
-    def timestamp() -> str:
+    def timestamp():
 
         return datetime.now(
             timezone.utc
         ).isoformat()
 
+    # =========================================================
+    # Filename safety
+    # =========================================================
+
     @staticmethod
-    def safe_filename(text: str) -> str:
+    def safe_filename(
+        text: str,
+    ):
 
         allowed = (
             "abcdefghijklmnopqrstuvwxyz"
@@ -94,37 +104,15 @@ class ClassroomLogger:
         )
 
         return "".join(
-            c if c in allowed else "_"
-            for c in text
+            char
+            if char in allowed
+            else "_"
+            for char in text
         )
 
-    # ---------------------------------------------------------
-    # Session
-    # ---------------------------------------------------------
-
-    def log_session_start(
-        self,
-        source: str,
-        device: str,
-        config: Optional[dict] = None,
-    ):
-
-        # Optional informational record.
-        # This isn't a person event.
-        record = {
-            "record_type": "session_start",
-            "timestamp": self.timestamp(),
-            "session_id": self.session_id,
-            "source": source,
-            "device": device,
-            "config": config or {},
-        }
-
-        self._write(record)
-
-    # ---------------------------------------------------------
-    # Suspicious / Alert event
-    # ---------------------------------------------------------
+    # =========================================================
+    # Behavior event
+    # =========================================================
 
     def log_behavior_event(
         self,
@@ -136,103 +124,134 @@ class ClassroomLogger:
         pose=None,
         bbox=None,
     ):
-        """
-        Save an event and a corresponding annotated screenshot.
-
-        event_type examples:
-
-            suspicious_start
-            alert_start
-            alert_repeat
-        """
 
         if behavior is None:
-            return None
+            return None, None
 
         if behavior.state not in {
             "SUSPICIOUS",
             "ALERT",
         }:
-            return None
+            return None, None
 
         timestamp = self.timestamp()
 
-        # -----------------------------------------------------
-        # Annotate image
-        # -----------------------------------------------------
+        annotated = frame.copy()
 
-        image = frame.copy()
+        # -----------------------------------------------------
+        # Bounding box
+        # -----------------------------------------------------
 
         if bbox is not None:
 
-            color = (
-                (0, 255, 255)
-                if behavior.state == "SUSPICIOUS"
-                else (0, 0, 255)
-            )
+            if behavior.state == "ALERT":
+                color = (
+                    0,
+                    0,
+                    255,
+                )
+            else:
+                color = (
+                    0,
+                    255,
+                    255,
+                )
 
             cv2.rectangle(
-                image,
-                (bbox.x1, bbox.y1),
-                (bbox.x2, bbox.y2),
+                annotated,
+
+                (
+                    bbox.x1,
+                    bbox.y1,
+                ),
+
+                (
+                    bbox.x2,
+                    bbox.y2,
+                ),
+
                 color,
                 3,
             )
 
             cv2.putText(
-                image,
+                annotated,
+
                 (
                     f"{person_id} | "
                     f"{behavior.state}"
                 ),
+
                 (
                     bbox.x1,
-                    max(30, bbox.y1 - 12),
+                    max(
+                        30,
+                        bbox.y1 - 12,
+                    ),
                 ),
+
                 cv2.FONT_HERSHEY_SIMPLEX,
+
                 0.75,
+
                 color,
+
                 2,
             )
 
-            if pose is not None:
+        # -----------------------------------------------------
+        # Pose text
+        # -----------------------------------------------------
 
-                pose_text = (
-                    f"Yaw: {pose.yaw:+.1f}  "
-                    f"Pitch: {pose.pitch:+.1f}  "
-                    f"Roll: {pose.roll:+.1f}"
-                )
+        if (
+            bbox is not None
+            and pose is not None
+        ):
 
-                cv2.putText(
-                    image,
-                    pose_text,
-                    (
-                        bbox.x1,
-                        bbox.y2 + 25,
-                    ),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.55,
-                    color,
-                    2,
-                )
+            text = (
+                f"Yaw: {pose.yaw:+.1f}  "
+                f"Pitch: {pose.pitch:+.1f}  "
+                f"Roll: {pose.roll:+.1f}"
+            )
+
+            cv2.putText(
+                annotated,
+
+                text,
+
+                (
+                    bbox.x1,
+                    bbox.y2 + 25,
+                ),
+
+                cv2.FONT_HERSHEY_SIMPLEX,
+
+                0.55,
+
+                color,
+
+                2,
+            )
 
         # -----------------------------------------------------
-        # Save snapshot
+        # Snapshot filename
         # -----------------------------------------------------
 
         filename = (
             f"{self.safe_filename(person_id)}_"
-            f"{event_type}_"
-            f"{datetime.now().strftime('%H-%M-%S-%f')}.jpg"
+            f"{self.safe_filename(event_type)}_"
+            f"{datetime.now().strftime('%H-%M-%S-%f')}"
+            ".jpg"
         )
 
         snapshot_path = (
-            self.snapshot_dir / filename
+            self.snapshot_dir
+            / filename
         )
 
         success = cv2.imwrite(
             str(snapshot_path),
-            image,
+            annotated,
             [
                 cv2.IMWRITE_JPEG_QUALITY,
                 self.jpeg_quality,
@@ -243,71 +262,110 @@ class ClassroomLogger:
             snapshot_path = None
 
         # -----------------------------------------------------
-        # JSON record
+        # Relative path for dashboard
+        # -----------------------------------------------------
+
+        snapshot_relative = None
+
+        if snapshot_path is not None:
+
+            snapshot_relative = (
+                snapshot_path
+                .relative_to(
+                    self.base_dir
+                )
+                .as_posix()
+            )
+
+        # -----------------------------------------------------
+        # JSONL event
         # -----------------------------------------------------
 
         record = {
-            "record_type": "behavior_event",
 
-            "timestamp": timestamp,
+            "record_type":
+                "behavior_event",
 
-            "session_id": self.session_id,
+            "timestamp":
+                timestamp,
 
-            "person_id": person_id,
+            "session_id":
+                self.session_id,
 
-            "tracker_id": tracker_id,
+            "person_id":
+                person_id,
 
-            "event_type": event_type,
+            "tracker_id":
+                int(tracker_id),
 
-            "state": behavior.state,
+            "event_type":
+                event_type,
 
-            "score": behavior.score,
+            "state":
+                behavior.state,
 
-            "reason": behavior.reason,
+            "score":
+                float(
+                    behavior.score
+                ),
 
-            "duration": behavior.duration,
+            "reason":
+                behavior.reason,
 
-            "bbox": None,
+            "duration":
+                float(
+                    behavior.duration
+                ),
 
-            "pose": None,
+            "bbox":
+                None,
 
-            "snapshot": (
-                str(snapshot_path)
-                if snapshot_path
-                else None
-            ),
+            "pose":
+                None,
+
+            "snapshot":
+                snapshot_relative,
         }
 
         if bbox is not None:
 
             record["bbox"] = {
-                "x1": bbox.x1,
-                "y1": bbox.y1,
-                "x2": bbox.x2,
-                "y2": bbox.y2,
-                "confidence": bbox.confidence,
+
+                "x1": int(
+                    bbox.x1
+                ),
+
+                "y1": int(
+                    bbox.y1
+                ),
+
+                "x2": int(
+                    bbox.x2
+                ),
+
+                "y2": int(
+                    bbox.y2
+                ),
+
+                "confidence":
+                    float(
+                        bbox.confidence
+                    ),
             }
 
         if pose is not None:
 
             record["pose"] = {
-                "yaw": pose.yaw,
-                "pitch": pose.pitch,
-                "roll": pose.roll,
+
+                "yaw":
+                    float(pose.yaw),
+
+                "pitch":
+                    float(pose.pitch),
+
+                "roll":
+                    float(pose.roll),
             }
-
-        self._write(record)
-
-        return snapshot_path
-
-    # ---------------------------------------------------------
-    # Internal
-    # ---------------------------------------------------------
-
-    def _write(self, record: dict[str, Any]):
-
-        if self.closed:
-            return
 
         self.events_file.write(
             json.dumps(
@@ -319,21 +377,14 @@ class ClassroomLogger:
 
         self.events_file.flush()
 
-    # ---------------------------------------------------------
-    # Shutdown
-    # ---------------------------------------------------------
+        return (
+            snapshot_relative,
+            record,
+        )
 
-    def log_session_end(
-        self,
-        reason: str = "normal_shutdown",
-    ):
-
-        self._write({
-            "record_type": "session_end",
-            "timestamp": self.timestamp(),
-            "session_id": self.session_id,
-            "reason": reason,
-        })
+    # =========================================================
+    # Close
+    # =========================================================
 
     def close(self):
 
@@ -341,17 +392,7 @@ class ClassroomLogger:
             return
 
         self.events_file.flush()
+
         self.events_file.close()
 
         self.closed = True
-
-    def __enter__(self):
-        return self
-
-    def __exit__(
-        self,
-        exc_type,
-        exc_value,
-        traceback,
-    ):
-        self.close()
